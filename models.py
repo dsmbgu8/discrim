@@ -1,7 +1,7 @@
 from util.aliases import *
 
 from sklearn.linear_model import LinearRegression, OrthogonalMatchingPursuit
-from sklearn.svm import LinearSVC, SVC, LinearSVR, SVR
+from sklearn.svm import LinearSVC, SVC, LinearSVR, SVR, LassoLarsCV
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
 from xgboost import XGBClassifier
 
@@ -10,9 +10,9 @@ pred_mode = 'clf' #  'reg' #
 
 ##### Models to evaluate #######################################################
 if pred_mode=='clf':
-    model_eval = ['linsvm','rbfsvm','rf','xgb']
+    model_eval = ('linsvm','rbfsvm','rf','xgb')
 else:
-    model_eval  = ['linreg','omp','rf']
+    model_eval = ('linreg','omp','lassolars','rf')
 
 ##### Training / cross-validation params #######################################
 gridcv_score   = 'roc_auc' if pred_mode=='clf' else 'mean_squared_error'
@@ -31,13 +31,15 @@ gridcv_verbose =  0 # verbosity level of model-tuning cross-validation output
 
 ##### Default model parameters #################################################
 
+model_coef = lambda model: model.coef_.squeeze()
+
 # Linear SVM    
 svmC = logspace(-3,8,12) 
 linsvm_tuned = {'C':svmC}
 linsvm_default = {
     'C':1.0,'verbose':train_verbose,'random_state':train_state
 }
-linsvm_coef = lambda model: model.coef_.squeeze()
+linsvm_coef = model_coef
 
 # RBF SVM
 rbfsvm_tuned = {'C':svmC,'gamma':logspace(-7,4,12)}
@@ -63,6 +65,11 @@ model_params  = {} # map from model_id -> tuple(default, tuning_params, coef)
 scorefn = {} # map from name -> function 
 ##### pred_mode specific parameters ############################################
 if pred_mode == 'clf':
+    ul = [-1,1]
+    scorefn['precision'] = lambda te,pr,ul=ul: precision_score(te,pr,labels=ul)
+    scorefn['recall']    = lambda te,pr,ul=ul: recall_score(te,pr,labels=ul)
+    errorfn              = lambda y_true,y_pred: y_true==y_pred
+    
     LinSVM = LinearSVC
     linsvm_default.update({'penalty':'l2', 'loss':'squared_hinge'})
 
@@ -83,34 +90,40 @@ if pred_mode == 'clf':
                  'max_depth':rf_depth,'subsample':[0.25,0.5,0.75]}
 
     def xgb_coef(model,dim):
-        booster = model.booster()
-        fscores = booster.get_fscore()
+        fscores = model.booster().get_fscore()
         findex  = map(lambda f: int(f[1:]), fscores.keys())
         fscore  = zeros(dim)
         fscore[findex] = fscores.values()
-        return fscore / double(fscore.sum())
+        return fscore / double(fscore[findex].sum())
 
     model_params['xgb']  = (XGBClassifier(**xgb_default),[xgb_tuned],xgb_coef)
 
-    ul = [-1,1]
-    scorefn['precision'] = lambda te,pr,ul=ul: precision_score(te,pr,labels=ul)
-    scorefn['recall']    = lambda te,pr,ul=ul: recall_score(te,pr,labels=ul)
-    errorfn              = lambda y_true,y_pred: y_true==y_pred
     
 elif pred_mode == 'reg':
+    scorefn['mse'] = lambda te,pr,_=None: mean_squared_error(te,pr)
+    errorfn        = lambda y_true,y_pred: y_true-y_pred
+    
     linreg_default = {'fit_intercept':True,'normalize':False,'copy_X':True,
                       'n_jobs':train_jobs}
     linreg_tuned   = {}
-    linreg_coef = lambda model: model.coef_
+    linreg_coef = model_coef
     model_params['linreg']  = (LinearRegression(**linreg_default),
                                [linreg_tuned],linreg_coef)
 
     omp_default = {'fit_intercept':True,'normalize':False,
                    'n_nonzero_coefs':None, 'tol':None}
     omp_tuned = {}
-    omp_coef = lambda model: model.coef_
+    omp_coef = model_coef
     model_params['omp']  = (OrthogonalMatchingPursuit(**omp_default),
-                               [omp_tuned],omp_coef)
+                            [omp_tuned],omp_coef)
+
+    # use the lassolarscv object to xvalidate rather than gridsearch
+    lassolars_default = {'fit_intercept':True,'normalize':False,'copy_X':True,
+                         'cv':cv_folds,'n_jobs':gridcv_jobs,'n_alphas':1000}
+    lassolars_tuned   = {}
+    lassolars_coef    = model_coef
+    model_params['lassolars']  = (LassoLarsCV(**lassolars_default),
+                                  [lassolars_tuned],lassolars_coef)
     
     svmEps = logspace(-4,4+1)
     LinSVM = LinearSVR
@@ -124,8 +137,6 @@ elif pred_mode == 'reg':
     RF = ExtraTreesRegressor
     rf_default.update({'criterion':'mse'})
 
-    scorefn['mse'] = lambda te,pr,_=None: mean_squared_error(te,pr)
-    errorfn        = lambda y_true,y_pred: y_true-y_pred
 
 model_params['linsvm'] = (LinSVM(**linsvm_default),[linsvm_tuned],linsvm_coef)
 model_params['rbfsvm'] = (RBFSVM(**rbfsvm_default),[rbfsvm_tuned],rbfsvm_coef)

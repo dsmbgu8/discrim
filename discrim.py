@@ -166,6 +166,11 @@ def discrim_state(input_statefile,output_statefile,update_output=False):
     y = input_state['y_exp'].copy()
 
     multi_output = len(y.shape) > 1 and min(y.shape) > 1
+
+    # remove incompatible models
+    if multi_output and ('linsvm' in models_eval or 'rbfsvm' in models_eval):
+        print 'Error: SVM (currently) incompatible with multi-output labels'
+        return input_state,{}
     
     if scaling_method=='Normalize':
         scale_fn = Normalizer(norm='l2').fit_transform
