@@ -1,7 +1,7 @@
 from util.aliases import *
 
-from sklearn.linear_model import LinearRegression, OrthogonalMatchingPursuit
-from sklearn.svm import LinearSVC, SVC, LinearSVR, SVR, LassoLarsCV
+from sklearn.linear_model import LinearRegression, OrthogonalMatchingPursuit, LassoLarsCV
+from sklearn.svm import LinearSVC, SVC, LinearSVR, SVR
 from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
 from xgboost import XGBClassifier
 
