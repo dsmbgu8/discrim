@@ -13,7 +13,8 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler, Normalizer
 from sklearn.utils import check_X_y
 from sklearn.cross_validation import  LeaveOneOut, StratifiedKFold, ShuffleSplit
 from sklearn.grid_search import GridSearchCV
-from sklearn.metrics import precision_score, recall_score, mean_squared_error
+from sklearn.metrics import precision_score, recall_score, mean_squared_error, \
+    explained_variance_score
 
 from models import *
 
@@ -169,7 +170,7 @@ def discrim_state(input_statefile,output_statefile,update_output=False):
 
     # remove incompatible models
     if multi_output and ('linsvm' in models_eval or 'rbfsvm' in models_eval):
-        print 'Error: SVM (currently) incompatible with multi-output labels'
+        print 'Error: SVR (currently) incompatible with multi-output labels'
         return input_state,{}
     
     if scaling_method=='Normalize':

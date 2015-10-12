@@ -8,14 +8,15 @@ from xgboost import XGBClassifier
 ##### Prediction mode (clf=classification, reg=regression) #####################
 pred_mode = 'clf' #  'reg' # 
 
-##### Models to evaluate #######################################################
+##### Models to evaluate/cv objective function #################################
 if pred_mode=='clf':
     model_eval = ('linsvm','rbfsvm','rf','xgb')
+    gridcv_score = 'roc_auc'
 else:
     model_eval = ('linreg','omp','lassolars','rf')
-
+    gridcv_score = 'explained_variance_score' # 'mean_squared_error'
+    
 ##### Training / cross-validation params #######################################
-gridcv_score   = 'roc_auc' if pred_mode=='clf' else 'mean_squared_error'
 cv_folds       =  inf # (integer->KFold, inf->LeaveOneOut)
 cv_id          = 'loo' if cv_folds == inf else '%d-fold'%cv_folds
 train_verbose  = 0 # verbosity level of training algorithm output
@@ -101,6 +102,7 @@ if pred_mode == 'clf':
     
 elif pred_mode == 'reg':
     scorefn['mse'] = lambda te,pr,_=None: mean_squared_error(te,pr)
+    scorefn['exp'] = lambda te,pr,_=None: explained_variance_score(te,pr)
     errorfn        = lambda y_true,y_pred: y_true-y_pred
     
     linreg_default = {'fit_intercept':True,'normalize':False,'copy_X':True,
