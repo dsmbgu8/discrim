@@ -11,10 +11,8 @@ from sklearn.base import clone
 from sklearn.externals.joblib import load as jlload, dump as jldump
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, Normalizer
 from sklearn.utils import check_X_y
-from sklearn.cross_validation import  LeaveOneOut, StratifiedKFold, ShuffleSplit
+from sklearn.cross_validation import LeaveOneOut, StratifiedKFold, ShuffleSplit
 from sklearn.grid_search import GridSearchCV
-from sklearn.metrics import precision_score, recall_score, mean_squared_error, \
-    explained_variance_score
 
 from models import *
 
@@ -102,6 +100,7 @@ def discrim_cv(X,y,cv,output={}):
         # bookkeeping variables
         models,preds,errors = [],[],[]
         scores = dict([(key,[]) for key in scorefn.keys()])
+        errors = dict([(key,[]) for key in errorfn.keys()])
         
         widgets = ['%s cv: '%cv_id, Percentage(), ' ', Bar('='), ' ', ETA()]
         pbar = ProgressBar(widgets=widgets, maxval=n_folds+(cv_id=='loo')).start()
@@ -131,14 +130,17 @@ def discrim_cv(X,y,cv,output={}):
                     scores[score].append(scorei)                
                 preds.append(clf_pred)                
                 models.append(clf)
-                errors.append(errorfn(y_test,clf_pred))
+                for error,error_fn in errorfn.iteritems():
+                    errors[error].append(error_fn(y_test,clf_pred))
                 
         if cv_id == 'loo':
             for score,score_fn in scorefn.iteritems():                
                 scorei = score_fn(y,y_pred,uy)
                 scores[score].append(scorei)
             preds  = [y_pred]
-            errors = [errorfn(y,y_pred)]
+            for error,error_fn in errorfn.iteritems():
+                errors[error].append(error_fn(y,y_pred))
+            
             models = [model_train(X,y,model_clf,model_tuned)]
             pbar.update(i+1)
         pbar.finish()
@@ -146,7 +148,7 @@ def discrim_cv(X,y,cv,output={}):
         for score,vals in scores.iteritems():
             print 'mean %s: %7.4f'%(score, mean(vals))
             
-        output[model_id] = {'preds':preds,'errors':errors,'scores':scores,
+        output[model_id] = {'preds':preds,'scores':scores,'errors':errors,
                             'models':models,'model_tuned':model_tuned}
     return output
 
@@ -169,7 +171,7 @@ def discrim_state(input_statefile,output_statefile,update_output=False):
     multi_output = len(y.shape) > 1 and min(y.shape) > 1
 
     # remove incompatible models
-    if multi_output and ('linsvm' in models_eval or 'rbfsvm' in models_eval):
+    if multi_output and ('linsvm' in model_eval or 'rbfsvm' in model_eval):
         print 'Error: SVR (currently) incompatible with multi-output labels'
         return input_state,{}
     
@@ -208,7 +210,7 @@ def discrim_state(input_statefile,output_statefile,update_output=False):
     elif pred_mode == 'clf':
         cv = StratifiedKFold(y,n_folds=cv_folds,random_state=train_state)
     elif pred_mode == 'reg':
-        cv = ShuffleSplit(cv_folds)
+        cv = ShuffleSplit(n=N,n_iter=cv_folds,test_size=int(N/cv_folds))
         
     output_state = discrim_cv(X,y,cv,output_state)
     output_state.update({'cv':cv,'cv_id':cv_id,'model_eval':model_eval,
