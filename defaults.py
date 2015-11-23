@@ -9,56 +9,85 @@ from xgboost import XGBClassifier
 from sklearn.metrics import precision_score, recall_score, mean_squared_error, \
     explained_variance_score, coverage_error
 
-##### SERIALIZATION PARAMS #####################################################
+# 1. SERIALIZATION PARAMS ######################################################
 output_dir = './discrim_output'
-jlcompress = 0 # warning: nonzero values disable memory mapping
+jlcompress = 9 # int \in [0,9] (warning: nonzero values disable memory mapping)
 jlmmap     = None # 'r' # memmap mode for loading (None=disabled)
 jlcache    = 500 # cache size in mb for joblib IO
 
-##### TRAINING / CROSS-VALIDATION PARAMS #######################################
-cv_folds       = inf # (integer->KFold, inf->LeaveOneOut)
+
+# 2. TRAINING / CROSS-VALIDATION PARAMS ########################################
+train_folds    = inf # (integer->KFold, inf->LeaveOneOut)
 train_verbose  = 0 # verbosity level of training algorithm output
 train_jobs     = -1 # -1 = all cores
 train_state    = 42 # random state
 
-##### GRID SEARCH PARAMS FOR PARAMETER TUNING ##################################
+
+# 3. GRID SEARCH PARAMS FOR PARAMETER TUNING ###################################
 gridcv_folds   =  2 # number of cross-validation folds per gridcv parameter 
 gridcv_jobs    =  -1  # -1 = use all cores
 gridcv_verbose =  1 # verbosity level of model-tuning cross-validation output
 default_gridcv = {'clf':'roc_auc','reg':'mean_squared_error'}
 
-##### SCORING AND ERROR FUNCTIONS ##############################################
+
+# 4. SCORING AND ERROR FUNCTIONS ###############################################
 default_scores = {'clf':['precision','recall'],'reg':['mse']}
 default_errors = {'clf':['match'],'reg':['diff']}
-
-scorefn = {} # map from name (e.g., mse) -> f(y_true,y_pred)
-errorfn = {} # map from name (e.g., diff) -> f(y_true,y_pred)
 
 clf_ulab             = [-1,1] # assume class labels \in {-1, 1}
 
 # score functions
+scorefn = {} # map from name (e.g., mse) -> f(y_true,y_pred)
 scorefn['precision'] = lambda te,pr,ul=clf_ulab: precision_score(te,pr,labels=ul)
 scorefn['recall']    = lambda te,pr,ul=clf_ulab: recall_score(te,pr,labels=ul)
 scorefn['mse']       = lambda te,pr,_=None: mean_squared_error(te,pr)
 scorefn['exp']       = lambda te,pr,_=None: explained_variance_score(te,pr)
 
 # error/loss functions
+errorfn = {} # map from name (e.g., diff) -> f(y_true,y_pred)
 errorfn['match'] = lambda y_true,y_pred: y_true==y_pred
 errorfn['diff']  = lambda y_true,y_pred: y_true-y_pred
 
 
-##### DEFAULT MODEL PARAMETERS #################################################
+# 5. DEFAULT MODEL PARAMETERS ##################################################
 default_models = {'clf':('linsvm','rbfsvm','rf','xgb'),
                   'reg':('linreg','omp','rf')}
 
-model_params  = {} # map from model_id -> tuple(default, tuning_params, coef_fn)
+# flag which models cannot handle n-dimensional vectors as labels
+model_nomulti = ('linsvm','rbfsvm','xgb','lassolars')
 
-# generic model template
+
+# model_params: map from model_id -> tuple(default, tuning_params, coef_fn)
+model_params  = {} 
+
+# generic model template: default+tuned parameters, function to retreive coefs
 model_default = {'verbose':train_verbose,'random_state':train_state}
 model_tuned = {}
 model_coef = lambda model: model.coef_.squeeze()
 
+class DISCRIM_MODEL:
+    def __init__(self,**kwargs):
+        self.verbose = train_verbose
+        self.random_state = train_state
 
+        self.model = None
+        self.defaults = {}
+        self.tuning = {}
+        self.multi_output = False
+
+    #@abstractmethod
+    def coef(self):
+        """Return model coefs."""
+        return model_coef(self.model)
+
+    def fit(self,*args,**kwargs):
+        return self.model.fit(*args,**kwargs)
+
+    def predict(self,*args,**kwargs):
+        return self.model.predict(*args,**kwargs)
+
+    
+    
 ### Linear SVM #################################################################
 svmC = logspace(-3,8,12) 
 linsvm_tuned = {'C':svmC}
@@ -80,7 +109,6 @@ linsvr_tuned.update({'epsilon':svmEps})
 
 model_params['linsvc'] = (LinearSVC(**linsvc_default),[linsvc_tuned],linsvm_coef)
 model_params['linsvr'] = (LinearSVR(**linsvr_default),[linsvr_tuned],linsvm_coef)
-
 
 ### RBF SVM ####################################################################
 rbfsvm_tuned = {'C':svmC,'gamma':logspace(-7,4,12)}
@@ -143,15 +171,15 @@ def xgb_coef(model,dim):
     fscore[findex] = fscores.values()
     return fscore / double(fscore[findex].sum())
 
-model_params['xgb']  = (XGBClassifier(**xgb_default),[xgb_tuned],xgb_coef)
+model_params['xgb'] = (XGBClassifier(**xgb_default),[xgb_tuned],xgb_coef)
 
 ### Linear regression ##########################################################
 linreg_default = {'fit_intercept':True,'normalize':False,'copy_X':true,
                   'n_jobs':train_jobs}
 linreg_tuned   = {}
 linreg_coef = model_coef
-model_params['linreg']     = (LinearRegression(**linreg_default),
-                              [linreg_tuned],linreg_coef)
+model_params['linreg'] = (LinearRegression(**linreg_default),
+                          [linreg_tuned],linreg_coef)
 
 ### Orthogonal Matching Pursuit ################################################
 omp_default = {'fit_intercept':True,'normalize':False,
@@ -164,8 +192,9 @@ model_params['omp'] = (OrthogonalMatchingPursuit(**omp_default),
 ### LassoLars ##################################################################
 # use the lassolarscv object to xvalidate rather than gridsearch
 lassolars_default = {'fit_intercept':True,'normalize':False,'copy_X':True,
-                     'cv':cv_folds,'n_jobs':gridcv_jobs,'max_n_alphas':1000}
+                     'cv':train_folds,'n_jobs':gridcv_jobs,'max_n_alphas':1000}
 lassolars_tuned   = {}
 lassolars_coef    = model_coef    
 model_params['lassolars']  = (LassoLarsCV(**lassolars_default),
                               [lassolars_tuned],lassolars_coef)
+

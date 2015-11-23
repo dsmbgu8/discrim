@@ -11,7 +11,7 @@ from sklearn.base import clone
 from sklearn.externals.joblib import load as jlload, dump as jldump
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, Normalizer
 from sklearn.utils import check_X_y
-from sklearn.cross_validation import LeaveOneOut, StratifiedKFold, ShuffleSplit
+from sklearn.cross_validation import LeaveOneOut, StratifiedKFold, KFold
 from sklearn.grid_search import GridSearchCV
 
 from defaults import *
@@ -33,12 +33,10 @@ def model_train(X_train,y_train,model_clf,model_tuned,gridcv_folds,gridcv_score)
     '''
     train a model via gridsearchcv with tuning parameters model_tuned
     '''
-
     # make a copy to ensure we don't invalidate parameters
     clf = clone(model_clf)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore") # disable sklearn convergence warnings
-        # tune params where desired
         if model_tuned is not None and len(model_tuned) != 0: 
             cv = GridSearchCV(clf,model_tuned,cv=gridcv_folds,scoring=gridcv_score,
                               n_jobs=gridcv_jobs,verbose=gridcv_verbose,refit=True)
@@ -50,37 +48,39 @@ def model_train(X_train,y_train,model_clf,model_tuned,gridcv_folds,gridcv_score)
     return clf
 
 class DISCRIM_EXP:
-    def __init__(self,**kwargs):
-        ##### Prediction mode (clf=classification, reg=regression) ##############
-        self.pred_mode = kwargs.pop('pred_mode','clf')
-        self.model_eval = kwargs.pop('model_eval',default_models[self.pred_mode])
-        self.cv_folds = kwargs.pop('cv_folds',cv_folds)
-        self.cv_id = 'loo' if self.cv_folds == inf else '%d-fold'%self.cv_folds
+    def __init__(self,exp_name,pred_mode,**kwargs):
+        ##### Prediction mode (clf=classification, reg=regression) #############
+        models_mode = default_models[pred_mode]
+        gridcv_score_mode = default_gridcv[pred_mode]
 
-        ##### Feature scaling method ############################################
+        self.exp_name = exp_name
+        self.pred_mode = pred_mode
+        self.exp_dir=kwargs.pop('exp_dir',output_dir)
+        self.model_eval = kwargs.pop('model_eval',models_mode)
+        self.train_folds = kwargs.pop('train_folds',train_folds)
+        self.cv_id = 'loo' if self.train_folds==inf else '%d-fold'%self.train_folds
+
+        ##### Feature scaling method ###########################################
         self.scaling_method = kwargs.pop('scaling_method','MinMax') # 'Standard' # None # 'Normalize' #
         self.gridcv_folds = kwargs.pop('gridcv_folds',gridcv_folds)
-        self.gridcv_score = kwargs.pop('gridcv_score',default_gridcv[self.pred_mode])
+        self.gridcv_score = kwargs.pop('gridcv_score',gridcv_score_mode)
         
-        ##### Models to evaluate/cv objective function ##########################
-        ##### pred_mode specific parameters #####################################
+        ##### Models to evaluate/cv objective function #########################
+        ##### pred_mode specific parameters ####################################
         self.model_params = {}
-
         for model in self.model_eval:
-            if self.pred_mode=='clf':
+            if pred_mode=='clf':
                 model_id = model.replace('svm','svc').replace('rf','rfc')
             else:
                 model_id = model.replace('svm','svr').replace('rf','rfr')
             self.model_params[model] = model_params[model_id]
 
-        self.scorefn = {}
-        for score in default_scores[self.pred_mode]:
-            self.scorefn[score] = scorefn[score]
+        scores_mode = default_scores[pred_mode]            
+        self.scorefn = dict((score,scorefn[score]) for score in scores_mode)
 
-        self.errorfn = {}            
-        for error in default_errors[self.pred_mode]:
-            self.errorfn[error] = errorfn[error]
-            
+        errors_mode = default_errors[pred_mode]
+        self.errorfn = dict((error,errorfn[error]) for error in errors_mode)
+
     def _run_cv(self,X,y,cv,output={}):
         '''    
         cross validate all models in model_eval list on samples X labels y
@@ -105,7 +105,7 @@ class DISCRIM_EXP:
                                                                                   N,n,pstr)
             model_clf,model_tuned,model_coef = self.model_params[model_id]
 
-            # check to make sure new model is different from old model
+            # check to make sure new model is different from an existing old model
             if model_id in output:
                 output_cv    = output['cv']
                 output_tuned = output[model_id].get('model_tuned',None)
@@ -194,12 +194,14 @@ class DISCRIM_EXP:
         X = input_state['X_exp'].copy()
         y = input_state['y_exp'].copy()
 
-        multi_output = len(y.shape) > 1 and min(y.shape) > 1
+        multi_output = y.size != max(y.shape)
 
-        # remove incompatible models
-        if multi_output and ('linsvm' in self.model_eval or 'rbfsvm' in self.model_eval):
-            print 'Error: SVR (currently) incompatible with multi-output labels'
-            return input_state,{}
+        if multi_output:
+            # error out if incompatible models in model_eval
+            for model in self.model_eval:
+                if model in model_nomulti:                    
+                    print 'Error: model %s not compatible with multi-output labels'%model
+                    return input_state,{}
 
         if self.scaling_method=='Normalize':
             scale_fn = Normalizer(norm='l2').fit_transform
@@ -234,9 +236,10 @@ class DISCRIM_EXP:
         if self.cv_id == 'loo':
             cv = LeaveOneOut(N)
         elif self.pred_mode == 'clf':
-            cv = StratifiedKFold(y,n_folds=cv_folds,random_state=train_state)
+            cv = StratifiedKFold(y,n_folds=self.train_folds,random_state=train_state)
         elif self.pred_mode == 'reg':
-            cv = ShuffleSplit(n=N,n_iter=cv_folds,test_size=int(N/cv_folds))
+            test_size = int(N/self.train_folds)
+            cv = KFold(n=N,n_folds=self.train_folds,shuffle=True)
 
         output_state = self._run_cv(X,y,cv,output_state)
         output_state.update({'cv':cv,'cv_id':self.cv_id,'model_eval':self.model_eval,
@@ -247,30 +250,30 @@ class DISCRIM_EXP:
 
         return input_state, output_state
 
-    def run(self,X_exp,y_exp,exp_name,exp_dir=output_dir):
+    def run(self,X_exp,y_exp):
         '''
         given input data X_exp labels y_exp \in {-1,0,1} (0=unlabeled),
         define input/output state files and serialize input data
         '''
-        if not pathexists(exp_dir):
-            os.makedirs(exp_dir)
+        if not pathexists(self.exp_dir):
+            os.makedirs(self.exp_dir)
 
-        input_statefile  = pathjoin(exp_dir,exp_name+'_input.pkl')
-        output_statefile = pathjoin(exp_dir,exp_name+'_output.pkl')
-        jldump({'X_exp':X_exp,'y_exp':y_exp,'exp_name':exp_name},
+        input_statefile  = pathjoin(self.exp_dir,self.exp_name+'_input.pkl')
+        output_statefile = pathjoin(self.exp_dir,self.exp_name+'_output.pkl')
+        jldump({'X_exp':X_exp,'y_exp':y_exp,'exp_name':self.exp_name},
                input_statefile,compress=jlcompress,cache_size=jlcache)
         input_state, output_state = self._collect_state(input_statefile,
                                                         output_statefile)
         return input_state, output_state            
 
-    def model_coef(self,exp_name,exp_dir=output_dir):    
-        input_statefile  = pathjoin(exp_dir,'_'.join([exp_name,'input.pkl']))
-        output_statefile = pathjoin(exp_dir,'_'.join([exp_name,self.scaling_method,self.pred_mode,'output.pkl']))
+    def model_coef(self):
+        input_statefile  = pathjoin(self.exp_dir,'_'.join([self.exp_name,'input.pkl']))
+        output_statefile = pathjoin(self.exp_dir,'_'.join([self.exp_name,self.scaling_method,self.pred_mode,'output.pkl']))
         try:
             input_state  = jlload(input_statefile,mmap_mode=None)
             output_state = jlload(output_statefile,mmap_mode=None)
         except:
-            print 'Error: unable to load input/output state files in exp_dir=%s'%exp_dir
+            print 'Error: unable to load input/output state files in exp_dir=%s'%self.exp_dir
             return {}
 
         coef = {}
@@ -297,7 +300,7 @@ class DISCRIM_EXP:
 
 if __name__ == '__main__':
     from sklearn.datasets import load_digits
-    cv_folds = 10
+    train_folds = 5
     
     data  = load_digits()
     X_exp = data.data.copy()
@@ -312,9 +315,11 @@ if __name__ == '__main__':
     y_reg = c_[y_clf==1,y_clf==-1].astype(float)
 
     clf_models = ['linsvc']
-    clf_exp = DISCRIM_EXP(pred_mode='clf',model_eval=clf_models,cv_folds=cv_folds)
-    clf_exp.run(X_exp,y_clf,'digits5v8_clf',exp_dir='/tmp/discrim_test')
+    clf_exp = DISCRIM_EXP('digits5v8_clf','clf',exp_dir='/tmp/discrim_test',
+                          model_eval=clf_models,train_folds=train_folds)
+    clf_exp.run(X_exp,y_clf)
     
     reg_models = ['linreg']
-    reg_exp = DISCRIM_EXP(pred_mode='reg',model_eval=reg_models,cv_folds=cv_folds)
-    reg_exp.run(X_exp,y_reg,'digits5v8_reg',exp_dir='/tmp/discrim_test')
+    reg_exp = DISCRIM_EXP('digits5v8_reg','reg',exp_dir='/tmp/discrim_test',
+                          model_eval=reg_models,train_folds=train_folds)
+    reg_exp.run(X_exp,y_reg)
