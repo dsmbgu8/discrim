@@ -11,8 +11,7 @@ from sklearn.metrics import precision_score, recall_score, mean_squared_error, \
 
 # 1. SERIALIZATION PARAMS ######################################################
 output_dir = './discrim_output'
-jlcompress = 9 # int \in [0,9] (warning: nonzero values disable memory mapping)
-jlmmap     = None # 'r' # memmap mode for loading (None=disabled)
+jlcompress = 9 # int \in [0,9] 
 jlcache    = 500 # cache size in mb for joblib IO
 
 
@@ -135,10 +134,11 @@ model_params['rbfsvr'] = (SVR(**rbfsvr_default),[rbfsvr_tuned],rbfsvm_coef)
 rf_trees = 400
 rf_feats = linspace(0.1,1,5)
 rf_depth = [2,4,10,25,100]
+rf_jobs  = 1 # multiprocessing + randomforest can cause race conditions
 
 rf_tuned = {'max_features':rf_feats,'max_depth':rf_depth}
 rf_default = {
-    'n_estimators': rf_trees,'max_features':'sqrt','n_jobs':train_jobs,
+    'n_estimators': rf_trees,'max_features':'sqrt','n_jobs':rf_jobs,
     'verbose':train_verbose,'random_state':train_state
 }
 rf_coef = lambda model: model.feature_importances_
@@ -164,12 +164,9 @@ xgb_default = {
 xgb_tuned = {'learning_rate':[0.001,0.01,0.05,0.1,0.25,0.33],
              'max_depth':xgb_depth,'subsample':xgb_subsample}
 
-def xgb_coef(model,dim):
+def xgb_coef(model):
     fscores = model.booster().get_fscore()
-    findex  = map(lambda f: int(f[1:]), fscores.keys())
-    fscore  = zeros(dim)
-    fscore[findex] = fscores.values()
-    return fscore / double(fscore[findex].sum())
+    return dict([(int(key[1:]),val) for key,val in fscores.iteritems()])
 
 model_params['xgb'] = (XGBClassifier(**xgb_default),[xgb_tuned],xgb_coef)
 

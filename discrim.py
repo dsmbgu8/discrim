@@ -37,7 +37,8 @@ def model_train(X_train,y_train,model_clf,model_tuned,gridcv_folds,gridcv_score)
     clf = clone(model_clf)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore") # disable sklearn convergence warnings
-        if model_tuned is not None and len(model_tuned) != 0: 
+        if model_tuned is not None and len(model_tuned) != 0 and \
+           len(model_tuned[0]) != 0: 
             cv = GridSearchCV(clf,model_tuned,cv=gridcv_folds,scoring=gridcv_score,
                               n_jobs=gridcv_jobs,verbose=gridcv_verbose,refit=True)
             cv.fit(X_train, y_train)
@@ -52,8 +53,9 @@ class DISCRIM_EXP:
         ##### Prediction mode (clf=classification, reg=regression) #############
         models_mode = default_models[pred_mode]
         gridcv_score_mode = default_gridcv[pred_mode]
-
+        
         self.exp_name = exp_name
+        
         self.pred_mode = pred_mode
         self.exp_dir=kwargs.pop('exp_dir',output_dir)
         self.model_eval = kwargs.pop('model_eval',models_mode)
@@ -170,26 +172,30 @@ class DISCRIM_EXP:
                                       self.gridcv_folds,self.gridcv_score)]
                 pbar.update(i+1)
             pbar.finish()
-
-            for score,vals in scores.iteritems():
-                print 'mean %s: %7.4f'%(score, mean(vals))
-
+            
             output[model_id] = {'preds':preds,'scores':scores,'errors':errors,
                                 'models':models,'model_tuned':model_tuned}
         return output
 
-    def _collect_state(self,input_statefile,output_statefile,update_output=False):
+    def _collect_state(self,input_statefile,output_statefile,
+                       output_exists='overwrite'):
         '''
         run _cv for an experiment (input_statefile) and serialize the output 
         (output_statefile), scales features using scaling_method, and excludes
         unlabeled (y=0) samples
+
+        if output_exists=='overwrite': overwrite existing output dump
+           output_exists=='noupdate': read existing output dump and return without updating
+        
         '''
 
-        input_state  = jlload(input_statefile,mmap_mode=jlmmap)
+        input_state  = jlload(input_statefile)
         output_state = {}
-        if update_output and pathexists(output_statefile):
+        if output_exists != 'overwrite' and pathexists(output_statefile):
             print 'Loading existing state from', output_statefile
-            output_state = jlload(output_statefile,mmap_mode=None)
+            output_state = jlload(output_statefile)
+            if output_exists == 'noupdate':
+                return input_state, output_state
 
         X = input_state['X_exp'].copy()
         y = input_state['y_exp'].copy()
@@ -201,7 +207,7 @@ class DISCRIM_EXP:
             for model in self.model_eval:
                 if model in model_nomulti:                    
                     print 'Error: model %s not compatible with multi-output labels'%model
-                    return input_state,{}
+                    return input_state,output_state
 
         if self.scaling_method=='Normalize':
             scale_fn = Normalizer(norm='l2').fit_transform
@@ -213,7 +219,7 @@ class DISCRIM_EXP:
             scale_fn = lambda X: X
         else:
             print 'Error: unknown scaling method "%s"'%self.scaling_method
-            return input_state,{}
+            return input_state,output_state
 
         print 'Scaling features using method "%s"'%self.scaling_method
         X = scale_fn(X)
@@ -242,14 +248,33 @@ class DISCRIM_EXP:
             cv = KFold(n=N,n_folds=self.train_folds,shuffle=True)
 
         output_state = self._run_cv(X,y,cv,output_state)
-        output_state.update({'cv':cv,'cv_id':self.cv_id,'model_eval':self.model_eval,
-                             'labmask':labmask,'scaling_method':self.scaling_method})
+        output_state.update({'cv':cv,'cv_id':self.cv_id,'labmask':labmask,
+                             'scaling_method':self.scaling_method,
+                             'model_eval':self.model_eval,'model_classes':2,
+                             'model_features':X.shape[1]})
 
         jldump(output_state,output_statefile,compress=jlcompress,
                cache_size=jlcache)
 
         return input_state, output_state
 
+    def state_exists(self):
+        input_statefile  = pathjoin(self.exp_dir,self.exp_name+'_input.pkl')
+        output_statefile = pathjoin(self.exp_dir,self.exp_name+'_output.pkl')
+        return pathexists(input_statefile) and pathexists(output_statefile)
+    
+    def load(self):
+        input_statefile  = pathjoin(self.exp_dir,self.exp_name+'_input.pkl')
+        output_statefile = pathjoin(self.exp_dir,self.exp_name+'_output.pkl')
+        input_state = {}
+        if pathexists(input_statefile):
+            print 'Loading input state from', input_statefile
+            input_state = jlload(input_statefile)        
+        output_state = {}
+        if pathexists(output_statefile):
+            print 'Loading output state from', output_statefile
+            output_state = jlload(output_statefile)        
+    
     def run(self,X_exp,y_exp):
         '''
         given input data X_exp labels y_exp \in {-1,0,1} (0=unlabeled),
@@ -266,27 +291,48 @@ class DISCRIM_EXP:
                                                         output_statefile)
         return input_state, output_state            
 
-    def model_coef(self):
-        input_statefile  = pathjoin(self.exp_dir,'_'.join([self.exp_name,'input.pkl']))
-        output_statefile = pathjoin(self.exp_dir,'_'.join([self.exp_name,self.scaling_method,self.pred_mode,'output.pkl']))
-        try:
-            input_state  = jlload(input_statefile,mmap_mode=None)
-            output_state = jlload(output_statefile,mmap_mode=None)
+    def summarize(self):
+        output_statefile = pathjoin(self.exp_dir,self.exp_name+'_output.pkl')
+        try:            
+            output_state = jlload(output_statefile)                
         except:
-            print 'Error: unable to load input/output state files in exp_dir=%s'%self.exp_dir
+            print 'Error: unable to load output state files in exp_dir=%s'%self.exp_dir
+            return {}
+        
+        for model_id in output_state['model_eval']:
+            print 'model: %s'%model_id
+            scores = output_state[model_id]['scores']        
+            for score_id, score_vals in scores.iteritems():
+                print 'mean %s: %7.4f (std=%7.4f)'%(score_id, mean(score_vals),
+                                                    std(score_vals))
+
+            
+    def model_coef(self):
+        output_statefile = pathjoin(self.exp_dir,'_'.join([self.exp_name,self.scaling_method,self.pred_mode,'output.pkl']))
+        try:            
+            output_state = jlload(output_statefile)                
+        except:
+            print 'Error: unable to load output state files in exp_dir=%s'%self.exp_dir
             return {}
 
-        coef = {}
+        n_feat = 0
         for model_id in output_state['model_eval']:
             models = output_state[model_id]['models']
             coef_fn = self.model_params[model_id][-1]
             model_coef = []
             for i,model in enumerate(models):
-                if model_id == 'xgb': # fix stupid xgb dimensionality issue
-                    w = coef_fn(model,input_state['X_exp'].shape[1])
+                if model_id == 'xgb': 
+                    w = coef_fn(model)
+                    n_feat = max(n_feat,w.keys())
                 else:
                     w = coef_fn(model)
                 model_coef.append(w)
+
+            if model_id == 'xgb':
+                coef = zeros([len(models),n_feat])
+                for j,mi in enumerate(model_coef):
+                    coef[j,mi.keys()] = mi.values()
+                model_coef = coef
 
             model_coef = asarray(model_coef)
             model_mean = mean(model_coef,axis=0)
@@ -318,8 +364,10 @@ if __name__ == '__main__':
     clf_exp = DISCRIM_EXP('digits5v8_clf','clf',exp_dir='/tmp/discrim_test',
                           model_eval=clf_models,train_folds=train_folds)
     clf_exp.run(X_exp,y_clf)
+    clf_exp.summarize()
     
     reg_models = ['linreg']
     reg_exp = DISCRIM_EXP('digits5v8_reg','reg',exp_dir='/tmp/discrim_test',
                           model_eval=reg_models,train_folds=train_folds)
     reg_exp.run(X_exp,y_reg)
+    reg_exp.summarize()
