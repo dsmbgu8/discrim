@@ -65,26 +65,25 @@ model_tuned = {}
 model_coef = lambda model: model.coef_.squeeze()
 
 class DISCRIM_MODEL:
-    def __init__(self,**kwargs):
-        self.verbose = train_verbose
-        self.random_state = train_state
+    def __init__(self,model,default_params,**kwargs):
+        self.verbose      = kwargs.pop('verbose',train_verbose)
+        self.random_state = kwargs.pop('random_state',train_state)
 
-        self.model = None
-        self.defaults = {}
-        self.tuning = {}
-        self.multi_output = False
+        self.model          = model
+        self.default_params = 
+        self.tuning_params  = {}
+        self.multi_output   = False
 
     #@abstractmethod
     def coef(self):
         """Return model coefs."""
-        return model_coef(self.model)
+        return self.model_coef(self.model)
 
     def fit(self,*args,**kwargs):
         return self.model.fit(*args,**kwargs)
 
     def predict(self,*args,**kwargs):
         return self.model.predict(*args,**kwargs)
-
     
     
 ### Linear SVM #################################################################
