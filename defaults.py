@@ -55,37 +55,11 @@ default_models = {'clf':('linsvm','rbfsvm','rf','xgb'),
 # flag which models cannot handle n-dimensional vectors as labels
 model_nomulti = ('linsvm','rbfsvm','xgb','lassolars')
 
-
-# model_params: map from model_id -> tuple(default, tuning_params, coef_fn)
-model_params  = {} 
-
 # generic model template: default+tuned parameters, function to retreive coefs
 model_default = {'verbose':train_verbose,'random_state':train_state}
-model_tuned = {}
 model_coef = lambda model: model.coef_.squeeze()
 
-class DISCRIM_MODEL:
-    def __init__(self,model,default_params,**kwargs):
-        self.verbose      = kwargs.pop('verbose',train_verbose)
-        self.random_state = kwargs.pop('random_state',train_state)
-
-        self.model          = model
-        self.default_params = 
-        self.tuning_params  = {}
-        self.multi_output   = False
-
-    #@abstractmethod
-    def coef(self):
-        """Return model coefs."""
-        return self.model_coef(self.model)
-
-    def fit(self,*args,**kwargs):
-        return self.model.fit(*args,**kwargs)
-
-    def predict(self,*args,**kwargs):
-        return self.model.predict(*args,**kwargs)
-    
-    
+# 6. MODEL SPECIFICATIONS ######################################################
 ### Linear SVM #################################################################
 svmC = logspace(-3,8,12) 
 linsvm_tuned = {'C':svmC}
@@ -105,9 +79,6 @@ linsvr_default.update({'loss':'epsilon_insensitive','epsilon':0.0})
 linsvr_tuned = linsvm_tuned.copy()
 linsvr_tuned.update({'epsilon':svmEps})
 
-model_params['linsvc'] = (LinearSVC(**linsvc_default),[linsvc_tuned],linsvm_coef)
-model_params['linsvr'] = (LinearSVR(**linsvr_default),[linsvr_tuned],linsvm_coef)
-
 ### RBF SVM ####################################################################
 rbfsvm_tuned = {'C':svmC,'gamma':logspace(-7,4,12)}
 rbfsvm_default = {
@@ -125,9 +96,6 @@ rbfsvr_default.update({'epsilon':0.0})
 
 rbfsvr_tuned = rbfsvm_tuned.copy()
 rbfsvr_tuned.update({'epsilon':svmEps})
-
-model_params['rbfsvc'] = (SVC(**rbfsvc_default),[rbfsvc_tuned],rbfsvm_coef)
-model_params['rbfsvr'] = (SVR(**rbfsvr_default),[rbfsvr_tuned],rbfsvm_coef)
 
 ### Random Forest ##############################################################
 rf_trees = 400
@@ -148,9 +116,6 @@ rfc_default.update({'criterion':'gini','class_weight':'subsample'})
 rfr_default = rf_default.copy()
 rfr_default.update({'criterion':'mse'})
 
-model_params['rfc'] = (RandomForestClassifier(**rfc_default),[rf_tuned],rf_coef) 
-model_params['rfr'] = (RandomForestRegressor(**rfr_default),[rf_tuned],rf_coef) 
-
 ### XGBoost ####################################################################
 xgb_depth = [3,4,5,10,25]
 xgb_subsample = linspace(0.1,1,5)
@@ -167,23 +132,18 @@ def xgb_coef(model):
     fscores = model.booster().get_fscore()
     return dict([(int(key[1:]),val) for key,val in fscores.iteritems()])
 
-model_params['xgb'] = (XGBClassifier(**xgb_default),[xgb_tuned],xgb_coef)
 
 ### Linear regression ##########################################################
 linreg_default = {'fit_intercept':True,'normalize':False,'copy_X':true,
                   'n_jobs':train_jobs}
 linreg_tuned   = {}
 linreg_coef = model_coef
-model_params['linreg'] = (LinearRegression(**linreg_default),
-                          [linreg_tuned],linreg_coef)
 
 ### Orthogonal Matching Pursuit ################################################
 omp_default = {'fit_intercept':True,'normalize':False,
                'n_nonzero_coefs':None, 'tol':None}
 omp_tuned = {}
 omp_coef = model_coef
-model_params['omp'] = (OrthogonalMatchingPursuit(**omp_default),
-                       [omp_tuned],omp_coef)
 
 ### LassoLars ##################################################################
 # use the lassolarscv object to xvalidate rather than gridsearch
@@ -191,6 +151,25 @@ lassolars_default = {'fit_intercept':True,'normalize':False,'copy_X':True,
                      'cv':train_folds,'n_jobs':gridcv_jobs,'max_n_alphas':1000}
 lassolars_tuned   = {}
 lassolars_coef    = model_coef    
+
+# 7. ADD MODELS TO MODEL_PARAMS ################################################
+
+# model_params: map from model_id -> tuple(default, tuning_params, coef_fn)
+model_params  = {}
+
+model_params['linsvc'] = (LinearSVC(**linsvc_default),[linsvc_tuned],linsvm_coef)
+model_params['linsvr'] = (LinearSVR(**linsvr_default),[linsvr_tuned],linsvm_coef)
+model_params['rbfsvc'] = (SVC(**rbfsvc_default),[rbfsvc_tuned],rbfsvm_coef)
+model_params['rbfsvr'] = (SVR(**rbfsvr_default),[rbfsvr_tuned],rbfsvm_coef)
+
+model_params['rfc'] = (RandomForestClassifier(**rfc_default),[rf_tuned],rf_coef) 
+model_params['rfr'] = (RandomForestRegressor(**rfr_default),[rf_tuned],rf_coef) 
+model_params['xgb'] = (XGBClassifier(**xgb_default),[xgb_tuned],xgb_coef)
+
+model_params['linreg'] = (LinearRegression(**linreg_default),
+                          [linreg_tuned],linreg_coef)
+model_params['omp'] = (OrthogonalMatchingPursuit(**omp_default),
+                       [omp_tuned],omp_coef)
 model_params['lassolars']  = (LassoLarsCV(**lassolars_default),
                               [lassolars_tuned],lassolars_coef)
 

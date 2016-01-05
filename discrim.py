@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # https://github.com/dsmbgu8/discrim
-
+from __future__ import print_function
+ 
 import sys, os, warnings
 
 from util.aliases import *
@@ -36,7 +37,7 @@ def model_train(X_train,y_train,model_clf,model_tuned,gridcv_folds,gridcv_score)
     # make a copy to ensure we don't invalidate parameters
     clf = clone(model_clf)
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore") # disable sklearn convergence warnings
+        #warnings.simplefilter("ignore") # disable sklearn convergence warnings
         if model_tuned is not None and len(model_tuned) != 0 and \
            len(model_tuned[0]) != 0: 
             cv = GridSearchCV(clf,model_tuned,cv=gridcv_folds,scoring=gridcv_score,
@@ -93,7 +94,7 @@ class DISCRIM_EXP:
             uy = unique(y)
             K,ymin = len(uy),uy[0]
             if K<2 or K>2:
-                print 'Error: need 2 classes for classification!'
+                print('Error: need 2 classes for classification!')
                 return {}        
             pstr = ', '.join(['%d: %d (%4.2f%%)'%(yi, sum(y==yi), sum(y==yi)/float(N)) for yi in uy])    
         elif self.pred_mode == 'reg':
@@ -102,9 +103,9 @@ class DISCRIM_EXP:
             pstr = 'ymin=%g, ymean=%g, ymedian=%g, ymax=%g'%(ymin,ymean,ymed,ymax)
 
         for model_id in self.model_eval:
-            print 'Evaluating %s model "%s" on %d %d-dimensional samples (%s)'%(self.pred_mode,
+            print('Evaluating %s model "%s" on %d %d-dimensional samples (%s)'%(self.pred_mode,
                                                                                   model_id,
-                                                                                  N,n,pstr)
+                                                                                  N,n,pstr))
             model_clf,model_tuned,model_coef = self.model_params[model_id]
 
             # check to make sure new model is different from an existing old model
@@ -113,7 +114,7 @@ class DISCRIM_EXP:
                 output_tuned = output[model_id].get('model_tuned',None)
                 if output_tuned == model_tuned and \
                    ([trte for trte in cv] == [trte for trte in output_cv]):
-                    print 'Model %s trained with the same data and tuned parameters already exists, skip?'%model_id
+                    print('Model %s trained with the same data and tuned parameters already exists, skip?'%model_id)
                     yn = raw_input()
                     if yn.strip() in ('y','Y'):
                         continue
@@ -124,7 +125,7 @@ class DISCRIM_EXP:
             n_folds = len(cv)
 
             # bookkeeping variables
-            models,preds,errors = [],[],[]
+            models,preds = [],[]
             scores = dict([(key,[]) for key in self.scorefn.keys()])
             errors = dict([(key,[]) for key in self.errorfn.keys()])
 
@@ -192,7 +193,7 @@ class DISCRIM_EXP:
         input_state  = jlload(input_statefile)
         output_state = {}
         if output_exists != 'overwrite' and pathexists(output_statefile):
-            print 'Loading existing state from', output_statefile
+            print('Loading existing state from', output_statefile)
             output_state = jlload(output_statefile)
             if output_exists == 'noupdate':
                 return input_state, output_state
@@ -206,7 +207,7 @@ class DISCRIM_EXP:
             # error out if incompatible models in model_eval
             for model in self.model_eval:
                 if model in model_nomulti:                    
-                    print 'Error: model %s not compatible with multi-output labels'%model
+                    print('Error: model %s not compatible with multi-output labels'%model)
                     return input_state,output_state
 
         if self.scaling_method=='Normalize':
@@ -218,10 +219,10 @@ class DISCRIM_EXP:
         elif self.scaling_method==None:
             scale_fn = lambda X: X
         else:
-            print 'Error: unknown scaling method "%s"'%self.scaling_method
+            print('Error: unknown scaling method "%s"'%self.scaling_method)
             return input_state,output_state
 
-        print 'Scaling features using method "%s"'%self.scaling_method
+        print('Scaling features using method "%s"'%self.scaling_method)
         X = scale_fn(X)
 
         # remove unlabeled samples
@@ -244,8 +245,7 @@ class DISCRIM_EXP:
         elif self.pred_mode == 'clf':
             cv = StratifiedKFold(y,n_folds=self.train_folds,random_state=train_state)
         elif self.pred_mode == 'reg':
-            test_size = int(N/self.train_folds)
-            cv = KFold(n=N,n_folds=self.train_folds,shuffle=True)
+            cv = KFold(n=N,n_folds=self.train_folds,random_state=train_state,shuffle=True)
 
         output_state = self._run_cv(X,y,cv,output_state)
         output_state.update({'cv':cv,'cv_id':self.cv_id,'labmask':labmask,
@@ -268,11 +268,11 @@ class DISCRIM_EXP:
         output_statefile = pathjoin(self.exp_dir,self.exp_name+'_output.pkl')
         input_state = {}
         if pathexists(input_statefile):
-            print 'Loading input state from', input_statefile
+            print('Loading input state from', input_statefile)
             input_state = jlload(input_statefile)        
         output_state = {}
         if pathexists(output_statefile):
-            print 'Loading output state from', output_statefile
+            print('Loading output state from', output_statefile)
             output_state = jlload(output_statefile)        
     
     def run(self,X_exp,y_exp):
@@ -296,15 +296,15 @@ class DISCRIM_EXP:
         try:            
             output_state = jlload(output_statefile)                
         except:
-            print 'Error: unable to load output state files in exp_dir=%s'%self.exp_dir
+            print('Error: unable to load output state files in exp_dir=%s'%self.exp_dir)
             return {}
         
         for model_id in output_state['model_eval']:
-            print 'model: %s'%model_id
+            print('model: %s'%model_id)
             scores = output_state[model_id]['scores']        
             for score_id, score_vals in scores.iteritems():
-                print 'mean %s: %7.4f (std=%7.4f)'%(score_id, mean(score_vals),
-                                                    std(score_vals))
+                print('mean %s: %7.4f (std=%7.4f)'%(score_id, mean(score_vals),
+                                                    std(score_vals)))
 
             
     def model_coef(self):
@@ -312,7 +312,7 @@ class DISCRIM_EXP:
         try:            
             output_state = jlload(output_statefile)                
         except:
-            print 'Error: unable to load output state files in exp_dir=%s'%self.exp_dir
+            print('Error: unable to load output state files in exp_dir=%s'%self.exp_dir)
             return {}
 
         n_feat = 0
